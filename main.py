@@ -4,14 +4,16 @@
 Stdlib only, no network, deterministic: two runs write identical bytes.
 Writes a 1024x1024 PNG to $MAKEFUN_OUTPUT_DIR/entry.png (default /output).
 Layout: Economist-style cover -- red masthead, huge condensed title,
-red date line, 4-line italic subtitle, and a 12-slice clock wheel, one
-slice per verified story of Monday 23 November 2026.
+red date line, 3-line italic subtitle, and a large 12-slice clock wheel
+(RIM 350), one slice per verified story of Monday 23 November 2026.
+Each slice carries a big two-line headline plus one short fact line,
+all sized to stay readable when the image is viewed at 300px.
 """
 import os
 import struct
 import sys
 import zlib
-from math import cos, pi, sin, sqrt, tan
+from math import cos, pi, sin, sqrt
 
 W = H = 1024
 CREAM = (245, 240, 230)
@@ -280,11 +282,11 @@ def text_c(s, cx, y, sx, sy, c, bold=False, italic=False, mono=True):
     text(s, cx - text_width(s, sx, mono) / 2, y, sx, sy, c, bold, italic, mono)
 
 # ---------------------------------------------------------------- wedges
-CX, CY = 512, 664
-RIM = 290
-ROSETTE = 52
-NUM_R = 312
-NUM_CIRCLE_R = 22
+CX, CY = 512, 644
+RIM = 350
+ROSETTE = 60
+NUM_R = 366
+NUM_CIRCLE_R = 16
 
 
 def _deg2rad(a):
@@ -292,11 +294,21 @@ def _deg2rad(a):
 
 
 def _ray_x(dy, a):
-    """x where the ray at angle a (deg, clockwise from top) crosses y=CY+dy."""
-    t = tan(_deg2rad(a))
-    if abs(t) > 1e6:
-        return 1e9 if t > 0 else -1e9
-    return CX - dy * t
+    """x where the ray at angle a (deg, clockwise from top) crosses y=CY+dy.
+
+    Returns None when the ray does not cross that row in the forward
+    direction (it points away from the row, or is horizontal). The old
+    tan-based version returned a huge sentinel with the wrong sign for
+    the 270-degree ray, which mirrored the spans of the 240-270 and
+    270-300 wedges onto the wrong side of the wheel.
+    """
+    c = cos(_deg2rad(a))
+    if abs(c) < 1e-9:
+        return None
+    t = -dy / c
+    if t < 0:
+        return None
+    return CX + sin(_deg2rad(a)) * t
 
 
 def wedge_span(a1, a2, y):
@@ -313,8 +325,22 @@ def wedge_span(a1, a2, y):
     hi = CX + dx
     x1 = _ray_x(dy, a1)
     x2 = _ray_x(dy, a2)
-    lo = max(lo, min(x1, x2))
-    hi = min(hi, max(x1, x2))
+    if x1 is None and x2 is None:
+        return None
+    if x1 is None:
+        # wedge extends from the x2 crossing toward a1's direction
+        if sin(_deg2rad(a1)) > 0:
+            lo = max(lo, x2)
+        else:
+            hi = min(hi, x2)
+    elif x2 is None:
+        if sin(_deg2rad(a2)) > 0:
+            lo = max(lo, x1)
+        else:
+            hi = min(hi, x1)
+    else:
+        lo = max(lo, min(x1, x2))
+        hi = min(hi, max(x1, x2))
     if hi <= lo:
         return None
     return (lo, hi)
@@ -335,7 +361,22 @@ def fit_span(a1, a2, y_top, height):
     return (lo, hi)
 
 
-def check_line(label, s, y_top, height, sx, a1, a2, tol=24, mono=True):
+def line_cx(top, height, a1, a2, bx, w):
+    """Centre x for a line so it sits inside its wedge span.
+
+    The wedge span shifts sideways across a line's rows (diagonal
+    spokes), so a line centred on the block centre can clip a spoke
+    even when its width fits. Keep the block centre when the line
+    fits there, and shift it only as far as needed to clear the span.
+    """
+    span = fit_span(a1, a2, top, height)
+    if span is None:
+        return bx
+    lo, hi = span
+    return min(max(bx, lo + w / 2), hi - w / 2)
+
+
+def check_line(label, s, y_top, height, sx, a1, a2, tol=0, mono=True):
     """Warn when a line is wider than its wedge span (plus tolerance)."""
     span = fit_span(a1, a2, y_top, height)
     w = text_width(s, sx, mono)
@@ -456,66 +497,59 @@ PICS = {
 # ---------------------------------------------------------------- layout
 # One slice per story. mid = (k-0.5)*30 degrees clockwise from top.
 # The text block is centred at polar(BLOCK_R, mid) and laid out in
-# screen coordinates: headline lines above the centre, content below.
-# Offsets are screen-y pixels from the block centre.
-BLOCK_R = 190
-HEAD_OFF = (-36, -19)
-BODY_OFF4 = (-1, 11, 23, 34)
-BODY_OFF3 = (-1, 11, 23)
-PIC_R = 268
+# screen coordinates: two big headline lines, then one short fact line.
+# Offsets are screen-y pixels from the block centre. The pictogram sits
+# on the mid-ray inside the text block (toward the rosette), clear of
+# the text boxes.
+BLOCK_R = 280
+HEAD_OFF = (-34, -2)
+BODY_OFF = (36,)
+PIC_R = 190
 
 SLICES = [
-    # (headline 2 lines, content lines, pictogram)
+    # (headline 2 lines, one short fact line, pictogram)
     (["NATO", "ON POLAND"],
-     ["NATO meets in", "Brussels; three", "Russian missiles", "entered Poland"],
+     ["3 MISSILES"],
      'shield'),
     (["DYMER", "TOLL 11"],
-     ["Drone strike", "collapses block in", "Dymer; 11 killed,",
-      "boy, 7, pulled alive"],
+     ["BOY 7 ALIVE"],
      'building'),
     (["NIKKEI", "FALLS 5%"],
-     ["Nikkei falls 5.06%", "as AI sell-off", "spreads; S&P down", "3.7%"],
+     ["AI SELL-OFF"],
      'chart'),
     (["IRAN", "ALL MEANS"],
-     ["Iran vows all means", "against US blockade;", "Trump: deal may wait",
-      "till 2027"],
+     ["DEAL IN 2027"],
      'tanker'),
     (["GAZA", "99% TOXIC"],
-     ["Oxfam: war left", "toxic pollution", "across 99% of", "Gaza"],
+     ["POLLUTION"],
      'flask'),
     (["ZELENSKYY", "SEEKS TALKS"],
-     ["Zelenskyy urges", "four-way talks with", "Russia as soon as",
-      "possible"],
+     ["4-WAY TALKS"],
      'globe'),
     (["BELGIUM", "SHUTDOWN"],
-     ["Air controllers join", "anti-austerity strike;", "airports shut,",
-      "flights grounded"],
+     ["FLIGHTS CUT"],
      'megaphone'),
     (["INDIA", "AIDS NEPAL"],
-     ["Modi offers Nepal", "$1.6bn aid on PM", "Balen Shah's first", "trip"],
+     ["$1.6BN AID"],
      'capitol'),
     (["MERCURY", "ARRIVAL"],
-     ["BepiColombo", "reaches Mercury", "orbit; ESA probes", "thruster glitch"],
+     ["8-YEAR TRIP"],
      'rocket'),
     (["PENNY", "ENDS"],
-     ["Trump signs", "Common Cents Act,", "ending the penny's",
-      "232-year run"],
+     ["232-YEAR RUN"],
      'coin'),
     (["SEOUL", "RESIGNS"],
-     ["Education minister", "quits over exam", "cheating scandal;",
-      "Lee accepts"],
+     ["EXAM SCANDAL"],
      'book'),
     (["YEMEN", "OIL STRIKE"],
-     ["Houthis claim Rabigh", "refinery hit; Saudi", "strike kills 4 in",
-      "Hodeida"],
+     ["REFINERY HIT"],
      'factory'),
 ]
 
 SUBTITLE = [
-    "NATO meets over Poland missiles \u00b7 Dymer toll reaches 11",
-    "Nikkei drops 5.06% in AI sell-off \u00b7 Iran vows all means on blockade",
-    "Gaza 99% toxic, Oxfam warns \u00b7 Zelenskyy wants four-way talks",
-    "Belgium airports shut by strike \u00b7 India pledges Nepal $1.6bn aid",
+    "NATO over Poland missiles \u00b7 Dymer toll 11 \u00b7 Nikkei -5.06%",
+    "Iran vows all means \u00b7 Gaza 99% toxic \u00b7 Zelenskyy talks",
+    "Belgium airports shut \u00b7 India gives Nepal $1.6bn aid",
 ]
 
 
@@ -530,16 +564,19 @@ def pic_offset(k, head, body, bx, by):
     the pictogram centre must stay >= 39px from the number-circle centre.
     """
     mid = (k - 0.5) * 30
+    a1 = (k - 1) * 30
+    a2 = k * 30
     boxes = []
     for i, h in enumerate(head):
-        w = text_width(h, 1.4)
-        boxes.append((bx - w / 2 - 3, by + HEAD_OFF[i] - 8,
-                      bx + w / 2 + 3, by + HEAD_OFF[i] + 8))
-    offs = BODY_OFF4 if len(body) == 4 else BODY_OFF3
+        w = text_width(h, 1.9)
+        lcx = line_cx(by + HEAD_OFF[i], 28, a1, a2, bx, w)
+        boxes.append((lcx - w / 2 - 3, by + HEAD_OFF[i] - 3,
+                      lcx + w / 2 + 3, by + HEAD_OFF[i] + 31))
     for j, ln in enumerate(body):
-        w = text_width(ln, 0.9, mono=False)
-        boxes.append((bx - w / 2 - 3, by + offs[j] - 7,
-                      bx + w / 2 + 3, by + offs[j] + 7))
+        w = text_width(ln, 1.6, mono=False)
+        lcx = line_cx(by + BODY_OFF[j], 24, a1, a2, bx, w)
+        boxes.append((lcx - w / 2 - 3, by + BODY_OFF[j] - 3,
+                      lcx + w / 2 + 3, by + BODY_OFF[j] + 27))
     nx, ny = polar(NUM_R, mid)
     for off in (0, -14, 14, -24, 24):
         px, py = polar(PIC_R, mid + off)
@@ -565,42 +602,41 @@ def draw_slice(k, head, body, pic):
     off = pic_offset(k, head, body, bx, by)
     px, py = polar(PIC_R, mid + off)
     PICS[pic](int(round(px)), int(round(py)))
-    # headlines, bold monospace, centred on the block centre x
+    # headlines, bold monospace, centred inside their wedge span
     for i, h in enumerate(head):
-        top = by + HEAD_OFF[i] - 7
-        check_line("slice %d head %d" % (k, i + 1), h, top, 15, 1.4, a1, a2)
-        text_c(h, bx, top, 1.4, 2.0, INK, bold=True)
-    # content lines, proportional
-    offs = BODY_OFF4 if len(body) == 4 else BODY_OFF3
+        top = by + HEAD_OFF[i]
+        check_line("slice %d head %d" % (k, i + 1), h, top, 28, 1.9, a1, a2)
+        text_c(h, line_cx(top, 28, a1, a2, bx, text_width(h, 1.9)), top, 1.9, 3.4, INK, bold=True)
+    # one short fact line, proportional
     for j, ln in enumerate(body):
-        top = by + offs[j] - 6
-        check_line("slice %d body %d" % (k, j + 1), ln, top, 14, 0.9, a1, a2,
+        top = by + BODY_OFF[j]
+        check_line("slice %d body %d" % (k, j + 1), ln, top, 24, 1.6, a1, a2,
                    mono=False)
-        text_c(ln, bx, top, 0.9, 1.75, INK, mono=False)
+        text_c(ln, line_cx(top, 24, a1, a2, bx, text_width(ln, 1.6, mono=False)), top, 1.6, 3.0, INK, mono=False)
     # red sparkles, scattered inside the wedge
-    for (r, ang) in ((246, mid - 12), (100, mid + 14)):
+    for (r, ang) in ((330, mid - 13), (120, mid + 14)):
         sxp, syp = polar(r, ang)
         star4(int(round(sxp)), int(round(syp)), 7, RED)
 
 
 def draw():
     # masthead
-    fill_rect(437, 24, 587, 76, RED)
-    text_c("The World", 512, 31, 2, 2, WHITE, bold=True)
-    text_c("In One Day", 512, 53, 2, 2, WHITE, bold=True)
+    fill_rect(437, 20, 587, 68, RED)
+    text_c("The World", 512, 25, 1.8, 1.8, WHITE, bold=True)
+    text_c("In One Day", 512, 45, 1.8, 1.8, WHITE, bold=True)
     # title, date, subtitle
-    text_c("THE WORLD IN ONE DAY", 512, 121, 8, 10, INK, bold=True)
-    text_c("MONDAY \u00b7 23 NOVEMBER 2026", 512, 211, 10 / 3, 3, RED, bold=True)
+    text_c("THE WORLD IN ONE DAY", 512, 84, 7, 8.5, INK, bold=True)
+    text_c("MONDAY \u00b7 23 NOVEMBER 2026", 512, 162, 10 / 3, 3.2, RED, bold=True)
     for i, ln in enumerate(SUBTITLE):
-        text_c(ln, 512, 244 + i * 24, 4 / 3, 2, INK, italic=True)
+        text_c(ln, 512, 190 + i * 28, 1.8, 3.1, INK, italic=True, mono=False)
     # wheel: rim and spokes first, text and icons on top
     circle(CX, CY, RIM, INK, 3)
     for k in range(12):
         a = _deg2rad(k * 30)
-        x0 = CX + 54 * sin(a)
-        y0 = CY - 54 * cos(a)
-        x1 = CX + 288 * sin(a)
-        y1 = CY - 288 * cos(a)
+        x0 = CX + 62 * sin(a)
+        y0 = CY - 62 * cos(a)
+        x1 = CX + 348 * sin(a)
+        y1 = CY - 348 * cos(a)
         line(int(round(x0)), int(round(y0)), int(round(x1)), int(round(y1)),
              INK, 2)
     # number circles
@@ -610,11 +646,11 @@ def draw():
         nx, ny = int(round(nx)), int(round(ny))
         fill_circle(nx, ny, NUM_CIRCLE_R, WHITE)
         circle(nx, ny, NUM_CIRCLE_R, INK, 2)
-        text_c(str(k), nx, ny - 9, 2.5, 2.5, INK, bold=True)
+        text_c(str(k), nx, ny - 9, 2.2, 2.2, INK, bold=True)
     # rosette
-    fill_circle(CX, CY, 53, RED)
-    fill_circle(CX, CY, 50, INK)
-    text_c("23", CX, CY - 21, 5, 6, WHITE, bold=True)
+    fill_circle(CX, CY, ROSETTE, RED)
+    fill_circle(CX, CY, ROSETTE - 3, INK)
+    text_c("23", CX, CY - 24, 6, 7, WHITE, bold=True)
     # slices
     for k, (head, body, pic) in enumerate(SLICES, start=1):
         draw_slice(k, head, body, pic)

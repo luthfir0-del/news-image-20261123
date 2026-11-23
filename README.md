@@ -7,7 +7,9 @@ A single-file Python program that draws an Economist-style "World Ahead"
 cover for one day of world news: **Monday 23 November 2026**. The cover
 carries twelve verified stories from that day on a twelve-slice clock wheel,
 with the masthead *The World In One Day*, a condensed headline, a red date
-line, a four-line serif subtitle, and a pictogram in every slice.
+line, a three-line italic subtitle, and a pictogram in every slice.
+Each slice carries a big two-line headline plus one short fact line,
+sized to stay readable at 300 px.
 
 ## The twelve stories
 
@@ -50,8 +52,8 @@ wedge, so a bad line break is caught before the image ships.
 
 ## Layout
 
-The wheel is centred at (512, 664) with a 290 px rim and a rosette
+The wheel is centred at (512, 644) with a 350 px rim and a rosette
 marked "23". Each slice's text block is centred on its mid-ray at
-radius 190 px, in plain screen coordinates, so the sideways slices
+radius 280 px, in plain screen coordinates, so the sideways slices
 read left to right like the top and bottom ones. Every line is checked
 against its wedge span before it is drawn.
